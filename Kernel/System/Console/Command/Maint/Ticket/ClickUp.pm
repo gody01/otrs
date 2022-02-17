@@ -25,12 +25,13 @@ our @ObjectDependencies = (
     'Kernel::System::DB',
     'Kernel::System::Ticket',
     'Kernel::System::Ticket::Article',
+    'Kernel::System::ObjectManager',
 );
 
 our %config = () ;
 our $SessionTmpFile = "/tmp/ClickupOTRS.session" ;
 our $CLICKUP_client = () ;
-
+our $DynamicField_CLICKUPARTICLEID = "" ;
 
 sub Configure {
     my ( $Self, %Param ) = @_;
@@ -118,10 +119,12 @@ sub getClickupMatchedUsers {
        my %OTRSUserData = $UserObject->GetUserData (
              UserID => $UserID,
        ) ;
+#       print Dumper (\%OTRSUserData) ;
        my $email = lc $OTRSUserData{'UserEmail'} ;
        $UsersByEmail{$email}{'UserID'} = $UserID ;
        $UsersByEmail{$email}{'email'} = $OTRSUserData{'UserEmail'} ;
-    }     
+       $UsersByEmail{$email}{'UserLogin'} = $OTRSUserData{'UserLogin'} ; 
+    }
      
     my $TeamMembers = $Self->getClickupTeams($CLICKUP)->{'teams'}->[0]->{'members'} ; 
     my %MatchedUsers = () ;
@@ -129,6 +132,7 @@ sub getClickupMatchedUsers {
        my $email = lc $Member->{'user'}{'email'} ;
        $MatchedUsers{$Member->{'user'}{'id'}}{'Email'} = defined $UsersByEmail{$email}{'email'} ? $UsersByEmail{$email}{'email'} : $Member->{'user'}{'email'} ;
        $MatchedUsers{$Member->{'user'}{'id'}}{'UserID'} = defined $UsersByEmail{$email}{'UserID'} ? $UsersByEmail{$email}{'UserID'} : 1 ;
+       $MatchedUsers{$Member->{'user'}{'id'}}{'UserLogin'} = defined $UsersByEmail{$email}{'UserLogin'} ? $UsersByEmail{$email}{'UserLogin'} : $Member->{'user'}{'email'} ;
 #       $MatchedUsers{$Member->{'user'}{'id'}}{'id'} = $Member->{'user'}{'id'} ;
     }
      
@@ -137,28 +141,90 @@ sub getClickupMatchedUsers {
 }
 
 sub getClickupTimeEntires {
-    my ( $Self, $CLICKUP, $ClickupSpaceID ) = @_;
-
-    my $MatchedUsers = $Self->getClickupMatchedUsers ( $CLICKUP, $ClickupSpaceID );
+    my ( $Self, $CLICKUP, $ClickupSpaceID, $assignee ) = @_;
 
     my $SessionRequestData = {
     };
 
     $SessionRequestData = encode_json ($SessionRequestData);
+    my $SessionRequestEndPoint = "/team/" . $config{'clickup_team_id'} . "/time_entries?space_id=" . $ClickupSpaceID . "&assignee=" . $assignee  . "&start_date=0" ; 
+
+    $CLICKUP->request('GET', $SessionRequestEndPoint , $SessionRequestData ) ;       
     
-    
-       
+    my $response = decode_json ( $CLICKUP->responseContent()) ;
+
+    if ( $response->{'err'} ) {
+        print "Error " . $response->{'ECODE'} . ": " . $response->{'err'} . "\n" ;
+    } else {
+        return $response ;
+    }
+
  
 }
 
 sub ClickupConsolidate {
-    my ( $Self, $ClickupSpaceID , %ArticlesHash ) = @_ ;
+    my ( $Self, $ClickupSpaceID , $TicketID, %ArticlesHash ) = @_ ;
 
     my $CLICKUP=$Self->initClickup () ;
+    my $MatchedUsers = $Self->getClickupMatchedUsers ( $CLICKUP, $ClickupSpaceID );
 
-    #my %TimeEntries =
-     $Self->getClickupTimeEntires ( $CLICKUP , $ClickupSpaceID ) ;
+    my $all_users = "";
+    foreach my $user ( keys %$MatchedUsers ) {
+       $all_users .= $user . ","; 
+    }
+    $all_users =~ s/,$//g ;
     
+    my $TimeEntries = $Self->getClickupTimeEntires ( $CLICKUP , $ClickupSpaceID, $all_users )->{'data'} ;    
+    for my $TimeEntry ( @$TimeEntries ) {
+        print $TimeEntry->{'id'} . "\n";
+        if ( defined $ArticlesHash{$TimeEntry->{'id'}} ) {
+           if ( $ArticlesHash{$TimeEntry->{'id'}}{'AccountedTime'} && ($ArticlesHash{$TimeEntry->{'id'}}{'AccountedTime'} == $TimeEntry->{'AccountedTime'}) ) {
+              next ;
+           }
+           print "Update time entry for: "  . $TimeEntry->{'id'}  . "\n" ;
+        } else {
+           print "Create Article for: " . $TimeEntry->{'id'} . "\n" ;
+           $Self->createArticle($TicketID, $MatchedUsers, $TimeEntry);
+        }
+    }
+}
+
+sub createArticle {
+    my ( $Self, $TicketID, $MatchedUsers, $TimeEntry ) = @_;
+    my $TicketObject = $Kernel::OM->Get('Kernel::System::Ticket');
+
+#    print ( $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'Email'} . "\n")  ;
+#    print ( $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserLogin'} . "\n" ) ;
+
+    my $ArticleID = $TicketObject->ArticleCreate(
+       TicketID         => $TicketID,
+       ArticleType      => 'note-external',
+       SenderType       => 'agent',
+       From             => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'Email'},
+       UserID           => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
+       Subject		=> $TimeEntry->{'task'}{'name'},
+       Body		=> $TimeEntry->{'task_url'} . " :: " . $TimeEntry->{'duration'},
+       HistoryType	=> 'AddNote',
+       HistoryComment	=> 'ClickUP 2 OTRS' ,
+       Charset		=> 'UTF-8',
+       MimeType         => 'text/plain',
+     ) ;
+
+#    Dodamo še DynamicField_CLICKUPARTICLEID
+     local $Kernel::OM = Kernel::System::ObjectManager->new();
+     my $DynamicFieldValueObject = $Kernel::OM->Get('Kernel::System::DynamicFieldValue');
+
+     $DynamicFieldValueObject->ValueSet (
+        FieldID  => $DynamicField_CLICKUPARTICLEID,
+        ObjectID => $ArticleID,
+        Value    => [
+            {
+                ValueText          => $TimeEntry->{'id'},            # optional, one of these fields must be provided
+            },
+        ],
+        UserID   => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
+    );
+
 }
 
 sub Run {
@@ -167,6 +233,13 @@ sub Run {
     $Self->Print("<yellow>Synchronizying with ClickUp ...</yellow>\n");
 
     my $TicketObject = $Kernel::OM->Get('Kernel::System::Ticket');
+
+    
+    use Kernel::System::ObjectManager;
+    local $Kernel::OM = Kernel::System::ObjectManager->new();
+    my $DynamicFieldObject = $Kernel::OM->Get('Kernel::System::DynamicField');
+
+    $DynamicField_CLICKUPARTICLEID = $DynamicFieldObject->DynamicFieldGet (Name => 'CLICKUPARTICLEID')->{'ID'};
 
     # Find all tickets which will escalate within the next five days.
     my @Tickets = $TicketObject->TicketSearch(
@@ -204,7 +277,7 @@ sub Run {
              } 
         }
         
-        $Self->ClickupConsolidate ( $Ticket{'DynamicField_CLICKUPID'} , %ArticlesHash ) ; 
+        $Self->ClickupConsolidate ( $Ticket{'DynamicField_CLICKUPID'} , $TicketID , %ArticlesHash ) ; 
 
     }
 
