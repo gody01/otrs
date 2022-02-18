@@ -15,7 +15,7 @@ use REST::Client;
 use utf8;
 use Encode ;
 use Time::HiRes qw(gettimeofday);
-
+use POSIX qw(strftime);
 use Data::Dumper;
 
 use parent qw(Kernel::System::Console::BaseCommand);
@@ -33,6 +33,9 @@ our $SessionTmpFile = "/tmp/ClickupOTRS.session" ;
 our $CLICKUP_client = () ;
 our $DynamicField_CLICKUPARTICLEID = "" ;
 
+
+
+
 sub Configure {
     my ( $Self, %Param ) = @_;
 
@@ -44,6 +47,12 @@ sub Configure {
         HasValue    => 1,
         ValueRegex  => qr/^\d+$/smx,
     );
+
+    my $ConfigObject = $Kernel::OM->Get('Kernel::Config');
+    
+    $config{'clickup_url'} = $ConfigObject->Get('Clickup::API_URL');
+    $config{'clickup_token'} = $ConfigObject->Get('Clickup::Token');
+    $config{'clickup_team_id'} = $ConfigObject->Get('Clickup::TeamID');
 
     # $Self->AddOption(
     #     Name        => 'option',
@@ -173,24 +182,64 @@ sub ClickupConsolidate {
        $all_users .= $user . ","; 
     }
     $all_users =~ s/,$//g ;
-    
+
+    # First check Clickup entries
     my $TimeEntries = $Self->getClickupTimeEntires ( $CLICKUP , $ClickupSpaceID, $all_users )->{'data'} ;    
+    my %TimeEntriesHash = () ;
     for my $TimeEntry ( @$TimeEntries ) {
-        print $TimeEntry->{'id'} . "\n";
+#        print $TimeEntry->{'id'} . "\n";
+        $TimeEntriesHash{$TimeEntry->{'id'}} = 1 ;
+        $TimeEntry->{'AccountedTime'} = int ( $TimeEntry->{'duration'} / 1000 / 60 ) ;
         if ( defined $ArticlesHash{$TimeEntry->{'id'}} ) {
            if ( $ArticlesHash{$TimeEntry->{'id'}}{'AccountedTime'} && ($ArticlesHash{$TimeEntry->{'id'}}{'AccountedTime'} == $TimeEntry->{'AccountedTime'}) ) {
-              next ;
+#              next ;
            }
-           print "Update time entry for: "  . $TimeEntry->{'id'}  . "\n" ;
+#           print "Update time entry for: "  . $TimeEntry->{'id'}  . "in Article: " . $ArticlesHash{$TimeEntry->{'id'}}{'ArticleID'} . "\n" ;
+           $Self->updateArticleTime ( $TicketID, $ArticlesHash{$TimeEntry->{'id'}}{'ArticleID'}, $MatchedUsers, $TimeEntry ) ;
         } else {
-           print "Create Article for: " . $TimeEntry->{'id'} . "\n" ;
-           $Self->createArticle($TicketID, $MatchedUsers, $TimeEntry);
+#           print "Create Article for: " . $TimeEntry->{'id'} . "\n" ;
+           $ArticlesHash{$TimeEntry->{'id'}}{'ArticleID'} = $Self->createArticle($TicketID, $MatchedUsers, $TimeEntry);
         }
+        $Self->updateArticleCreateTime ($ArticlesHash{$TimeEntry->{'id'}}{'ArticleID'}, $TimeEntry ) ;
     }
+
+    # Then remove all Articles/Entires deleted from Clickup
+    for my $Article ( keys %ArticlesHash ) {
+        if ( ! defined $TimeEntriesHash{$Article} ) {
+           print "Za brisanje: $Article\n" ;
+           $Self->deleteArticle($ArticlesHash{$Article}{'ArticleID'});
+        }
+    } 
+}
+
+sub updateArticleCreateTime {
+    my ( $Self, $ArticleID , $TimeEntry ) = @_;
+
+    my $incoming_time = $TimeEntry->{'end'}/1000;
+    my $DBObject = $Kernel::OM->Get('Kernel::System::DB');
+
+#    print "Update incmoing_time for $ArticleID to $create_time \n" ;
+
+    return if !$DBObject->Do(
+                SQL => 'UPDATE article SET incoming_time = ? WHERE id = ?',
+                Bind => [ \$incoming_time , \$ArticleID ],
+    );
+}
+
+sub deleteArticle {
+    my ( $Self, $ArticleID ) = @_;
+    my $TicketObject = $Kernel::OM->Get('Kernel::System::Ticket');
+
+    $TicketObject->ArticleDelete(
+        ArticleID => $ArticleID,
+        UserID    => 1,
+    );
+
 }
 
 sub createArticle {
     my ( $Self, $TicketID, $MatchedUsers, $TimeEntry ) = @_;
+
     my $TicketObject = $Kernel::OM->Get('Kernel::System::Ticket');
 
 #    print ( $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'Email'} . "\n")  ;
@@ -198,17 +247,26 @@ sub createArticle {
 
     my $ArticleID = $TicketObject->ArticleCreate(
        TicketID         => $TicketID,
-       ArticleType      => 'note-external',
+       ArticleType      => 'note-internal',
        SenderType       => 'agent',
        From             => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'Email'},
        UserID           => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
        Subject		=> $TimeEntry->{'task'}{'name'},
-       Body		=> $TimeEntry->{'task_url'} . " :: " . $TimeEntry->{'duration'},
+       Body		=> $TimeEntry->{'task_url'} . " :: " . $TimeEntry->{'AccountedTime'},
        HistoryType	=> 'AddNote',
-       HistoryComment	=> 'ClickUP 2 OTRS' ,
+       HistoryComment	=> $TimeEntry->{'task'}{'name'},
        Charset		=> 'UTF-8',
        MimeType         => 'text/plain',
+       IncomingTime	=> $TimeEntry->{'end'}/1000,
      ) ;
+
+# Dodamo še accounted time
+    my $Success = $TicketObject->TicketAccountTime(
+        TicketID  => $TicketID,
+        ArticleID => $ArticleID,
+        TimeUnit  => $TimeEntry->{'AccountedTime'},
+        UserID    => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
+    );
 
 #    Dodamo še DynamicField_CLICKUPARTICLEID
      local $Kernel::OM = Kernel::System::ObjectManager->new();
@@ -225,7 +283,27 @@ sub createArticle {
         UserID   => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
     );
 
+    return $ArticleID ;
 }
+
+sub updateArticleTime {
+    my ( $Self, $TicketID, $ArticleID, $MatchedUsers, $TimeEntry ) = @_;
+    my $TicketObject = $Kernel::OM->Get('Kernel::System::Ticket');
+
+    my $Success = $TicketObject->ArticleAccountedTimeDelete(
+           ArticleID => $ArticleID,
+    );
+
+# Dodamo nov čas
+    $Success = $TicketObject->TicketAccountTime(
+        TicketID  => $TicketID,
+        ArticleID => $ArticleID,
+        TimeUnit  => $TimeEntry->{'AccountedTime'} ,
+        UserID    => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
+    );
+    
+}
+
 
 sub Run {
     my ( $Self, %Param ) = @_;
@@ -253,24 +331,29 @@ sub Run {
         }
     );
 
+
     for my $TicketID (@Tickets) {
         # get ticket data
         my %Ticket = $TicketObject->TicketGet(
             TicketID      => $TicketID,
             DynamicFields => 1,
         );
-        
+
+
         my %ArticlesHash = () ;
-        my @Articles = $TicketObject->ArticleIndex( TicketID => $TicketID );
+        my @Articles = $TicketObject->ArticleGet( 
+           TicketID => $TicketID ,
+           DynamicFields => 1,
+           SenderType => 'agent',
+        );
+
         for my $Article (@Articles) {
-             my %ArticleHash = $TicketObject->ArticleGet (
-                     ArticleID => $Article,
-                     DynamicFields => 1,
-             ); 
+             my %ArticleHash = %{$Article} ; 
+
              $ArticleHash{'AccountedTime'} = $TicketObject->ArticleAccountedTimeGet (
-                     ArticleID => $Article,
+                     ArticleID => $Article->{'ArticleID'},
              ) ;
-             
+                          
              # Interested only in Articles with ClickupArticleID set
              if ( $ArticleHash{'DynamicField_CLICKUPARTICLEID'} ) {
                  $ArticlesHash{$ArticleHash{'DynamicField_CLICKUPARTICLEID'}} = \%ArticleHash ;
@@ -280,8 +363,6 @@ sub Run {
         $Self->ClickupConsolidate ( $Ticket{'DynamicField_CLICKUPID'} , $TicketID , %ArticlesHash ) ; 
 
     }
-
-
 
     # return $Self->ExitCodeError();
 

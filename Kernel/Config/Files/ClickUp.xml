@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<otrs_config version="1.0" init="Framework">
+    <ConfigItem Name="Clickup::API_URL" Required="0" Valid="1" ConfigLevel="200">
+        <Description Translatable="1">Enter API URL for ClickUp integration</Description>
+        <Group>Framework</Group>
+        <SubGroup>Core</SubGroup>
+        <Setting>
+            <String Regex="">https://api.clickup.com/api/v2</String>
+        </Setting>
+    </ConfigItem>
+    <ConfigItem Name="Clickup::Token" Required="0" Valid="1" ConfigLevel="200">
+        <Description Translatable="1">Enter Authorizaiton token for ClickUp integration</Description>
+        <Group>Framework</Group>
+        <SubGroup>Core</SubGroup>
+        <Setting>
+            <String Regex=""></String>
+        </Setting>
+    </ConfigItem>
+    <ConfigItem Name="Clickup::TeamID" Required="0" Valid="1" ConfigLevel="200">
+        <Description Translatable="1">Enter team ID for ClickUp integration</Description>
+        <Group>Framework</Group>
+        <SubGroup>Core</SubGroup>
+        <Setting>
+            <String Regex=""></String>
+        </Setting>
+    </ConfigItem>    
+</otrs_config>
