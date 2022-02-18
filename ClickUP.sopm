@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<otrs_package version="1.0">
+  <Name>ClickUP</Name>
+  <Version>0.0.1</Version>
+  <Framework>5.x.x</Framework>
+  <Vendor>Agenda d.o.o.</Vendor>
+  <URL>https://www.agenda.si/</URL>
+  <License>GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007</License>
+  <ChangeLog Version="0.0.1" Date="2020-06-05 11:59:00">Initial package.</ChangeLog>
+  <Description Lang="en">ClickUp integration.</Description>
+  <Description Lang="sl">ClickUp integracija.</Description>
+  <IntroInstall Type="post" Lang="en" Title="Thank you!">Thank you for choosing the ClickUp integration module.</IntroInstall>
+  <Description Lang="sl">Hvala, da ste izbrali modul ClickUp integracija.</Description>
+  <BuildDate>?</BuildDate>
+  <BuildHost>?</BuildHost>
+  <Filelist>
+    <File Permission="644" Location="Kernel/System/Console/Command/Maint/Ticket/ClickUp.pm"/>
+    <File Permission="644" Location="Kernel/Config/Files/ClickUp.xml"/>
+  </Filelist>
+</otrs_package>

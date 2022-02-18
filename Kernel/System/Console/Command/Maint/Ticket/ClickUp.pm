@@ -26,13 +26,14 @@ our @ObjectDependencies = (
     'Kernel::System::Ticket',
     'Kernel::System::Ticket::Article',
     'Kernel::System::ObjectManager',
+    'Kernel::System::Email',
 );
 
 our %config = () ;
 our $SessionTmpFile = "/tmp/ClickupOTRS.session" ;
 our $CLICKUP_client = () ;
 our $DynamicField_CLICKUPARTICLEID = "" ;
-
+our $MissingSubject = "Missing OTRS ticket for ClickUp space:" ;
 
 
 
@@ -166,9 +167,7 @@ sub getClickupTimeEntires {
         print "Error " . $response->{'ECODE'} . ": " . $response->{'err'} . "\n" ;
     } else {
         return $response ;
-    }
-
- 
+    } 
 }
 
 sub ClickupConsolidate {
@@ -209,7 +208,7 @@ sub ClickupConsolidate {
            print "Za brisanje: $Article\n" ;
            $Self->deleteArticle($ArticlesHash{$Article}{'ArticleID'});
         }
-    } 
+    }
 }
 
 sub updateArticleCreateTime {
