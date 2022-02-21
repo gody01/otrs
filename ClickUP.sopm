@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <otrs_package version="1.0">
   <Name>ClickUP</Name>
-  <Version>0.0.1</Version>
+  <Version>0.0.3</Version>
   <Framework>5.x.x</Framework>
   <Vendor>Agenda d.o.o.</Vendor>
   <URL>https://www.agenda.si/</URL>
@@ -14,7 +14,8 @@
   <BuildDate>?</BuildDate>
   <BuildHost>?</BuildHost>
   <Filelist>
-    <File Permission="644" Location="Kernel/System/Console/Command/Maint/Ticket/ClickUp.pm"/>
-    <File Permission="644" Location="Kernel/Config/Files/ClickUp.xml"/>
+    <File Permission="664" Location="Kernel/System/Console/Command/Maint/Ticket/ClickUp.pm"/>
+    <File Permission="664" Location="Kernel/System/Console/Command/Maint/Ticket/checkClickUp.pm"/>
+    <File Permission="664" Location="Kernel/Config/Files/ClickUp.xml"/>
   </Filelist>
 </otrs_package>
