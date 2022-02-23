@@ -33,6 +33,8 @@ our %config = () ;
 our $SessionTmpFile = "/tmp/ClickupOTRS.session" ;
 our $CLICKUP_client = () ;
 our $DynamicField_CLICKUPARTICLEID = "" ;
+our $DynamicField_Zahtevnost = "";
+our $DefaultZahtevnost = "ST04-03";
 our $MissingSubject = "Missing OTRS ticket for ClickUp space:" ;
 
 
@@ -191,7 +193,7 @@ sub ClickupConsolidate {
         $TimeEntry->{'AccountedTime'} = int ( $TimeEntry->{'duration'} / 1000 / 60 ) ;
         if ( defined $ArticlesHash{$TimeEntry->{'id'}} ) {
            if ( $ArticlesHash{$TimeEntry->{'id'}}{'AccountedTime'} && ($ArticlesHash{$TimeEntry->{'id'}}{'AccountedTime'} == $TimeEntry->{'AccountedTime'}) ) {
-#              next ;
+              next ;
            }
 #           print "Update time entry for: "  . $TimeEntry->{'id'}  . "in Article: " . $ArticlesHash{$TimeEntry->{'id'}}{'ArticleID'} . "\n" ;
            $Self->updateArticleTime ( $TicketID, $ArticlesHash{$TimeEntry->{'id'}}{'ArticleID'}, $MatchedUsers, $TimeEntry ) ;
@@ -215,14 +217,20 @@ sub updateArticleCreateTime {
     my ( $Self, $ArticleID , $TimeEntry ) = @_;
 
     my $incoming_time = $TimeEntry->{'end'}/1000;
+    my $create_time = POSIX::strftime( '%Y-%m-%d %H:%M:%S' , localtime($incoming_time));
     my $DBObject = $Kernel::OM->Get('Kernel::System::DB');
 
-#    print "Update incmoing_time for $ArticleID to $create_time \n" ;
+#    print "$ArticleID :: $incoming_time :: $create_time \n" ;
 
-    return if !$DBObject->Do(
-                SQL => 'UPDATE article SET incoming_time = ? WHERE id = ?',
-                Bind => [ \$incoming_time , \$ArticleID ],
+    $DBObject->Do(
+        SQL => 'UPDATE article SET incoming_time = ?, create_time = ?, change_time = ? WHERE id = ?',
+        Bind => [ \$incoming_time , \$create_time, \$create_time, \$ArticleID ],
     );
+    
+    $DBObject->Do(
+        SQL => 'UPDATE time_accounting SET create_time = ?, change_time = ? WHERE article_id = ?',
+        Bind => [ \$create_time, \$create_time , \$ArticleID ],
+    );    
 }
 
 sub deleteArticle {
@@ -282,6 +290,21 @@ sub createArticle {
         UserID   => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
     );
 
+#    Dodamo še DynamicField_Zahtevnost
+     local $Kernel::OM = Kernel::System::ObjectManager->new();
+     $DynamicFieldValueObject = $Kernel::OM->Get('Kernel::System::DynamicFieldValue');
+
+     $DynamicFieldValueObject->ValueSet (
+        FieldID  => $DynamicField_Zahtevnost,
+        ObjectID => $ArticleID,
+        Value    => [
+            {
+                ValueText          => $DefaultZahtevnost,
+            },
+        ],
+        UserID   => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
+    );
+
     return $ArticleID ;
 }
 
@@ -289,18 +312,20 @@ sub updateArticleTime {
     my ( $Self, $TicketID, $ArticleID, $MatchedUsers, $TimeEntry ) = @_;
     my $TicketObject = $Kernel::OM->Get('Kernel::System::Ticket');
 
+
     my $Success = $TicketObject->ArticleAccountedTimeDelete(
            ArticleID => $ArticleID,
     );
 
 # Dodamo nov čas
-    $Success = $TicketObject->TicketAccountTime(
-        TicketID  => $TicketID,
-        ArticleID => $ArticleID,
-        TimeUnit  => $TimeEntry->{'AccountedTime'} ,
-        UserID    => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
-    );
-    
+    if ( $TimeEntry->{'AccountedTime'} ) {
+       $Success = $TicketObject->TicketAccountTime(
+          TicketID  => $TicketID,
+          ArticleID => $ArticleID,
+          TimeUnit  => $TimeEntry->{'AccountedTime'} ,
+          UserID    => $MatchedUsers->{$TimeEntry->{'user'}{'id'}}{'UserID'},
+       );
+    }
 }
 
 
@@ -317,6 +342,7 @@ sub Run {
     my $DynamicFieldObject = $Kernel::OM->Get('Kernel::System::DynamicField');
 
     $DynamicField_CLICKUPARTICLEID = $DynamicFieldObject->DynamicFieldGet (Name => 'CLICKUPARTICLEID')->{'ID'};
+    $DynamicField_Zahtevnost = $DynamicFieldObject->DynamicFieldGet (Name => 'Zahtevnost')->{'ID'};    
 
     # Find all tickets which will escalate within the next five days.
     my @Tickets = $TicketObject->TicketSearch(
