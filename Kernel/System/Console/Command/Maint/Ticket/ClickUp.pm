@@ -109,7 +109,7 @@ sub getClickupTeams {
 
     $SessionRequestData = encode_json ($SessionRequestData);
     my $SessionRequestEndPoint = "/team/" ;
-    $CLICKUP->request('GET', $SessionRequestEndPoint , $SessionRequestData ) ;
+    $CLICKUP->request('GET', $SessionRequestEndPoint ) ;
 
     my $response = decode_json ( $CLICKUP->responseContent()) ;
 
@@ -161,7 +161,7 @@ sub getClickupTimeEntires {
     $SessionRequestData = encode_json ($SessionRequestData);
     my $SessionRequestEndPoint = "/team/" . $config{'clickup_team_id'} . "/time_entries?space_id=" . $ClickupSpaceID . "&assignee=" . $assignee  . "&start_date=0" ; 
 
-    $CLICKUP->request('GET', $SessionRequestEndPoint , $SessionRequestData ) ;       
+    $CLICKUP->request('GET', $SessionRequestEndPoint ) ;       
     
     my $response = decode_json ( $CLICKUP->responseContent()) ;
 
